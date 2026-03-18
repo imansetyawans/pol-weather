@@ -129,7 +129,7 @@ class Trader:
     def _place_order(self, signal: dict) -> Optional[dict]:
         """Place a FAK BUY NO order via the CLOB API."""
         try:
-            from py_clob_client.clob_types import OrderArgs, OrderType, MarketOrderArgs
+            from py_clob_client.clob_types import OrderArgs, OrderType, MarketOrderArgs, PartialCreateOrderOptions
             from py_clob_client.order_builder.constants import BUY
 
             market = signal["market"]
@@ -147,12 +147,16 @@ class Trader:
             )
 
             # Create and post market order (FAK)
-            order = self._clob_client.create_market_order(
+            order_args = MarketOrderArgs(
                 token_id=no_token_id,
                 side=BUY,
                 amount=amount,
                 price=no_price,
-                options={"tick_size": tick_size, "neg_risk": neg_risk},
+            )
+            opts = PartialCreateOrderOptions(tick_size=tick_size, neg_risk=neg_risk)
+            order = self._clob_client.create_market_order(
+                order_args,
+                options=opts,
             )
             response = self._clob_client.post_order(order, OrderType.FAK)
 
@@ -181,8 +185,13 @@ class Trader:
             return result
 
         except Exception as exc:
-            log.error(f"[trader] Order placement failed: {exc}")
-            raise
+            err_msg = str(exc)
+            if "FAK" in err_msg or "kill" in err_msg.lower() or "not filled" in err_msg.lower():
+                log.warning(f"[trader] FAK order was killed (no matching liquidity at price): {err_msg}")
+                return None
+            else:
+                log.error(f"[trader] Order placement failed: {exc}")
+                raise
 
     # ── Traded markets persistence ──
 
