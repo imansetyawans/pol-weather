@@ -25,6 +25,18 @@ class Trader:
         self._trade_history: list[dict] = []
         self._load_traded_markets()
 
+    def sync_live_positions(self, positions: list[dict]):
+        """Sync actual live positions from Polymarket API to guarantee no duplicates."""
+        added = 0
+        for pos in positions:
+            condition_id = pos.get("conditionId")
+            if condition_id and condition_id not in self._traded_markets:
+                self._traded_markets.add(condition_id)
+                added += 1
+        if added > 0:
+            log.info(f"[trader] Synced {added} new active positions from live API to block duplicates.")
+            self._save_traded_markets()
+
     def _init_client(self):
         """Initialize the py-clob-client with L1→L2 auth flow."""
         if self._clob_client is not None:

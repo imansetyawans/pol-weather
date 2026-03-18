@@ -67,7 +67,10 @@ class WeatherBot:
             # ── 1. Get wallet status ──
             try:
                 balance = self.wallet.get_usdc_balance()
-            except Exception:
+                positions = self.wallet.get_positions()
+                self.trader.sync_live_positions(positions)
+            except Exception as e:
+                self._log(f"⚠ Could not fetch live positions/balance: {e}", "yellow")
                 balance = 0.0
             self._log(f"💰 Wallet balance: ${balance:.2f} USDC")
 
@@ -186,63 +189,75 @@ class WeatherBot:
     # ── Headless mode (no TUI) ──
 
     def run_headless(self):
-        """Run a single scan cycle without the TUI (for testing / CI)."""
+        """Run scanning cycle continuously in headless mode."""
         log.info("=" * 60)
-        log.info("Polymarket Weather Bot -- Headless Mode")
+        log.info("Polymarket Weather Bot -- Headless Continuous Mode")
         log.info("=" * 60)
 
-        balance = 0.0
-        if settings.FUNDER_ADDRESS:
+        while True:
             try:
-                balance = self.wallet.get_usdc_balance()
-            except Exception as exc:
-                log.warning(f"Could not fetch balance: {exc}")
-        else:
-            log.warning("FUNDER_ADDRESS not set -- skipping balance check")
+                balance = 0.0
+                if settings.FUNDER_ADDRESS:
+                    try:
+                        balance = self.wallet.get_usdc_balance()
+                        positions = self.wallet.get_positions()
+                        self.trader.sync_live_positions(positions)
+                    except Exception as exc:
+                        log.warning(f"Could not fetch wallet data: {exc}")
+                else:
+                    log.warning("FUNDER_ADDRESS not set -- skipping balance check")
 
-        log.info(f"Balance: ${balance:.2f} USDC")
-        log.info(f"Mode: {'DRY RUN' if settings.DRY_RUN else 'LIVE'}")
+                log.info(f"Balance: ${balance:.2f} USDC")
+                log.info(f"Mode: {'DRY RUN' if settings.DRY_RUN else 'LIVE'}")
 
-        markets = self.scanner.scan()
-        log.info(f"📊 Found {len(markets)} markets")
+                markets = self.scanner.scan()
+                log.info(f"📊 Found {len(markets)} markets")
 
-        for market in markets:
-            city = market.get("city")
-            if not city:
-                continue
+                for market in markets:
+                    city = market.get("city")
+                    if not city:
+                        continue
 
-            forecast = self.weather.fetch_forecast(city)
-            if not forecast:
-                log.warning(f"No forecast for {city}")
-                continue
+                    forecast = self.weather.fetch_forecast(city)
+                    if not forecast:
+                        log.warning(f"No forecast for {city}")
+                        continue
 
-            threshold_c = market.get("threshold_c")
-            if threshold_c is None:
-                continue
+                    threshold_c = market.get("threshold_c")
+                    if threshold_c is None:
+                        continue
 
-            prob = self.edge_model.estimate_with_hourly_data(
-                forecast.get("hourly_temps_c", []),
-                threshold_c,
-                forecast.get("uncertainty_c", 2.0),
-            )
+                    prob = self.edge_model.estimate_with_hourly_data(
+                        forecast.get("hourly_temps_c", []),
+                        threshold_c,
+                        forecast.get("uncertainty_c", 2.0),
+                    )
 
-            forecast_prob_yes = prob["prob_exceeds"]
-            market["edge"] = (market.get("yes_price", 0) or 0) - forecast_prob_yes
+                    forecast_prob_yes = prob["prob_exceeds"]
+                    market["edge"] = (market.get("yes_price", 0) or 0) - forecast_prob_yes
 
-            log.info(
-                f"  {city}: forecast={forecast['forecast_high_c']}°C, "
-                f"threshold={threshold_c}°C, P(exceed)={forecast_prob_yes:.2%}, "
-                f"edge={market['edge']:+.2%}"
-            )
+                    log.info(
+                        f"  {city}: forecast={forecast['forecast_high_c']}°C, "
+                        f"threshold={threshold_c}°C, P(exceed)={forecast_prob_yes:.2%}, "
+                        f"edge={market['edge']:+.2%}"
+                    )
 
-            signal = self.strategy.evaluate(market, forecast_prob_yes, balance)
-            if signal:
-                result = self.trader.execute_trade(signal)
-                if result:
-                    log.info(f"✅ Trade result: {result}")
+                    signal = self.strategy.evaluate(market, forecast_prob_yes, balance)
+                    if signal:
+                        result = self.trader.execute_trade(signal)
+                        if result:
+                            log.info(f"✅ Trade result: {result}")
 
-        log.info("=" * 60)
-        log.info("Scan complete.")
+                log.info("=" * 60)
+                log.info(f"Scan complete. Sleeping for {settings.SCAN_INTERVAL} seconds...")
+                time.sleep(settings.SCAN_INTERVAL)
+
+            except KeyboardInterrupt:
+                log.info("Headless loop stopped by user")
+                return
+            except Exception as e:
+                log.error(f"Error in headless loop: {e}")
+                time.sleep(60)
 
 
 def main():
