@@ -146,12 +146,16 @@ class Trader:
                 f"${amount:.2f} @ {no_price:.4f}"
             )
 
+            # Add a small slippage buffer to the worst-case limit price
+            # Polymarket FAK orders require a limit price; if set exactly to current mid, it won't fill.
+            worst_price = round(min(0.99, no_price + 0.02), 3)
+
             # Create and post market order (FAK)
             order_args = MarketOrderArgs(
                 token_id=no_token_id,
                 side=BUY,
                 amount=amount,
-                price=no_price,
+                price=worst_price,
             )
             opts = PartialCreateOrderOptions(tick_size=tick_size, neg_risk=neg_risk)
             order = self._clob_client.create_market_order(
