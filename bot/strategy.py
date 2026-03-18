@@ -18,6 +18,7 @@ class Strategy:
         self.no_threshold = settings.NO_THRESHOLD
         self.edge_threshold = settings.EDGE_THRESHOLD
         self.kelly_factor = settings.KELLY_FACTOR
+        self.take_profit_threshold = settings.TAKE_PROFIT_THRESHOLD
 
     def evaluate(
         self,
@@ -147,3 +148,45 @@ class Strategy:
         )
 
         return position_size
+
+    def evaluate_take_profit(self, market: dict, position: dict) -> Optional[dict]:
+        """
+        Evaluate if an open NO position should be closed for profit.
+
+        Args:
+            market: The live market dictionary from the scanner
+            position: The open position dictionary from the Wallet
+
+        Returns:
+            Trade signal dict for SELL_NO or None
+        """
+        no_price = market.get("no_price")
+        if no_price is None:
+            return None
+
+        condition_id = market.get("condition_id")
+        if not condition_id or condition_id.lower() != position.get("conditionId", "").lower():
+            return None
+
+        if position.get("outcome") != "No":
+            return None
+
+        if no_price >= self.take_profit_threshold:
+            size_to_sell = float(position.get("size", 0.0))
+            if size_to_sell <= 0:
+                return None
+
+            signal = {
+                "action": "SELL_NO",
+                "market": market,
+                "no_price": no_price,
+                "position_size_shares": size_to_sell, # Amount to sell is measured in shares
+            }
+
+            log.info(
+                f"[strategy] 💰 TAKE PROFIT SIGNAL: SELL NO on {market.get('city')} | "
+                f"Live Price={no_price:.4f} >= Threshold={self.take_profit_threshold:.4f} | Shares={size_to_sell:.4f}"
+            )
+            return signal
+        
+        return None

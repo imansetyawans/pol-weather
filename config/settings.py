@@ -29,10 +29,11 @@ class Settings:
     TOP_MARKETS: int = int(os.getenv("TOP_MARKETS", "3"))
     DRY_RUN: bool = os.getenv("DRY_RUN", "true").lower() == "true"
 
-    # ── Strategy ──
-    NO_THRESHOLD: float = float(os.getenv("NO_THRESHOLD", "0.85"))
-    EDGE_THRESHOLD: float = float(os.getenv("EDGE_THRESHOLD", "0.02"))
+    MIN_EDGE: float = float(os.getenv("MIN_EDGE", "0.05"))
+    NO_THRESHOLD: float = float(os.getenv("NO_THRESHOLD", "0.90"))
+    EDGE_THRESHOLD: float = float(os.getenv("EDGE_THRESHOLD", "0.05"))
     KELLY_FACTOR: float = float(os.getenv("KELLY_FACTOR", "0.25"))
+    TAKE_PROFIT_THRESHOLD: float = float(os.getenv("TAKE_PROFIT_THRESHOLD", "0.99"))
 
     # ── Weather APIs ──
     NOAA_API: str = os.getenv("NOAA_API", "https://api.weather.gov")

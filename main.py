@@ -72,6 +72,8 @@ class WeatherBot:
             except Exception as e:
                 self._log(f"⚠ Could not fetch live positions/balance: {e}", "yellow")
                 balance = 0.0
+                positions = []
+
             self._log(f"💰 Wallet balance: ${balance:.2f} USDC")
 
             # ── 2. Scan markets ──
@@ -91,6 +93,24 @@ class WeatherBot:
                 if not city:
                     self._log(f"⚠ Skipping market with no city: {market.get('question', '?')}", "yellow")
                     continue
+
+                # ── Evaluate Take Profit First ──
+                position = next((p for p in positions if p.get("conditionId", "").lower() == market.get("condition_id", "").lower()), None)
+                if position:
+                    tp_signal = self.strategy.evaluate_take_profit(market, position)
+                    if tp_signal:
+                        self._log(f"🎯 Take profit triggered for {city}! Executing...", "bold green")
+                        result = await asyncio.to_thread(self.trader.execute_trade, tp_signal)
+                        if result:
+                            self._log(
+                                f"✅ Trade executed: SELL NO on {city} | "
+                                f"{tp_signal.get('position_size_shares', 0):.4f} shares",
+                                "green",
+                            )
+                        else:
+                            self._log(f"⚠ Take profit failed for {city}", "yellow")
+                        enriched.append(market)
+                        continue  # Skip regular evaluation if we are taking profit
 
                 # Fetch weather forecast
                 self._log(f"🌤️  Fetching forecast for {city}...")
@@ -204,8 +224,10 @@ class WeatherBot:
                         self.trader.sync_live_positions(positions)
                     except Exception as exc:
                         log.warning(f"Could not fetch wallet data: {exc}")
+                        positions = []
                 else:
                     log.warning("FUNDER_ADDRESS not set -- skipping balance check")
+                    positions = []
 
                 log.info(f"Balance: ${balance:.2f} USDC")
                 log.info(f"Mode: {'DRY RUN' if settings.DRY_RUN else 'LIVE'}")
@@ -217,6 +239,17 @@ class WeatherBot:
                     city = market.get("city")
                     if not city:
                         continue
+
+                    # ── Evaluate Take Profit First ──
+                    position = next((p for p in positions if p.get("conditionId", "").lower() == market.get("condition_id", "").lower()), None)
+                    if position:
+                        tp_signal = self.strategy.evaluate_take_profit(market, position)
+                        if tp_signal:
+                            log.info(f"🎯 Take profit triggered for {city}! Executing...")
+                            result = self.trader.execute_trade(tp_signal)
+                            if result:
+                                log.info(f"✅ Trade result: SELL NO on {city}")
+                            continue  # Skip regular evaluation if taking profit
 
                     forecast = self.weather.fetch_forecast(city)
                     if not forecast:

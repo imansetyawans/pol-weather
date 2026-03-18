@@ -139,35 +139,51 @@ class Trader:
 
     @retry_with_backoff(max_retries=2, exceptions=(Exception,))
     def _place_order(self, signal: dict) -> Optional[dict]:
-        """Place a FAK BUY NO order via the CLOB API."""
+        """Place a FAK BUY NO or SELL NO order via the CLOB API."""
         try:
             from py_clob_client.clob_types import OrderArgs, OrderType, MarketOrderArgs, PartialCreateOrderOptions
-            from py_clob_client.order_builder.constants import BUY
+            from py_clob_client.order_builder.constants import BUY, SELL
 
             market = signal["market"]
             no_token_id = market["no_token_id"]
             no_price = signal["no_price"]
-            amount = signal["position_size_usdc"]
             neg_risk = market.get("neg_risk", False)
             tick_size = market.get("tick_size", "0.01")
             city = market.get("city", "unknown")
             condition_id = market.get("condition_id", "")
+            action = signal.get("action")
 
-            log.info(
-                f"[trader] 🔶 Placing FAK BUY NO on {city}: "
-                f"${amount:.2f} @ {no_price:.4f}"
-            )
+            if action not in ["BUY_NO", "SELL_NO"]:
+                log.warning(f"[trader] Unsupported action: {action}")
+                return None
 
-            # Add a small slippage buffer to the worst-case limit price
-            # Polymarket FAK orders require a limit price; if set exactly to current mid, it won't fill.
-            worst_price = round(min(0.99, no_price + 0.02), 3)
+            # Determine side and calculate order parameters
+            clob_side = BUY if action == "BUY_NO" else SELL
+
+            if action == "BUY_NO":
+                amount = signal.get("position_size_usdc", 0.0)
+                if amount < 2.0:
+                    log.debug(f"[trader] Size ${amount:.2f} too small")
+                    return None
+                log.info(f"[trader] 🔶 Placing FAK BUY NO on {city}: ${amount:.2f} @ {no_price:.4f}")
+                # Add slippage buffer for BUY (buying requires bumping max limit price up)
+                limit_price = round(min(0.99, no_price + 0.02), 3)
+
+            else: # SELL_NO
+                amount = signal.get("position_size_shares", 0.0)
+                if amount <= 0:
+                    log.debug(f"[trader] Sell size <= 0")
+                    return None
+                log.info(f"[trader] 🔶 Placing FAK SELL NO on {city}: {amount:.4f} shares @ {no_price:.4f}")
+                # Add slippage buffer for SELL (selling requires dropping min limit price down)
+                limit_price = round(max(0.01, no_price - 0.02), 3)
 
             # Create and post market order (FAK)
             order_args = MarketOrderArgs(
                 token_id=no_token_id,
-                side=BUY,
+                side=clob_side,
                 amount=amount,
-                price=worst_price,
+                price=limit_price,
             )
             opts = PartialCreateOrderOptions(tick_size=tick_size, neg_risk=neg_risk)
             order = self._clob_client.create_market_order(
@@ -181,7 +197,7 @@ class Trader:
                 "order_id": response.get("orderID", ""),
                 "insert_status": response.get("status", ""),
                 "city": city,
-                "side": "BUY_NO",
+                "side": action, # Use action directly
                 "amount": amount,
                 "price": no_price,
                 "token_id": no_token_id[:16] + "...",
