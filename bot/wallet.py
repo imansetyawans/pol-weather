@@ -23,8 +23,9 @@ CTF_ABI = json.loads('[{"constant":false,"inputs":[{"name":"collateralToken","ty
                        '"payable":false,"stateMutability":"nonpayable","type":"function"}]')
 
 # Minimal NegRiskAdapter ABI
-NEGRISK_ABI = json.loads('[{"constant":false,"inputs":[{"name":"conditionIds","type":"bytes32[]"}],'
-                          '"name":"redeemPositions","outputs":[],"type":"function"}]')
+NEGRISK_ABI = json.loads('[{"constant":false,"inputs":[{"name":"conditionId","type":"bytes32"},'
+                          '{"name":"indexSets","type":"uint256[]"}],"name":"redeemPositions","outputs":[],'
+                          '"type":"function"}]')
 
 
 class Wallet:
@@ -54,7 +55,7 @@ class Wallet:
             log.error(f"[wallet] Failed to fetch USDC balance: {exc}")
             if self._balance_cache is not None:
                 return self._balance_cache
-            raise
+            return 0.0 # Return 0.0 instead of raising to avoid crashing the loop
 
     @retry_with_backoff(max_retries=2, exceptions=(Exception,))
     def get_positions(self) -> list[dict]:
@@ -148,24 +149,36 @@ class Wallet:
             log.error(f"[wallet] Error during standard redemption: {e}")
             return False
 
-    def redeem_negrisk(self, condition_ids: list[str]) -> bool:
+    def redeem_negrisk(self, condition_id: str, outcome_index: int = 1) -> bool:
         """
-        Execute redemption for Negative Risk markets via the specialized Adapter.
+        Execute redemption for a Negative Risk market via the specialized Adapter.
         
         Args:
-            condition_ids: List of 32-byte condition ID hex strings
+            condition_id: 32-byte condition ID hex string
+            outcome_index: 0 for Yes, 1 for No
             
         Returns:
             True if successful transaction, False otherwise
         """
         try:
-            log.info(f"[wallet] 🏦 Initiating batch NegRisk redemption for {len(condition_ids)} conditions...")
+            log.info(f"[wallet] 🏦 Initiating NegRisk redemption for {condition_id}...")
             
             if settings.DRY_RUN:
-                log.info(f"[wallet] (DRY-RUN) Would redeem NegRisk conditions: {condition_ids}")
+                log.info(f"[wallet] (DRY-RUN) Would redeem NegRisk condition: {condition_id}")
                 return True
 
             w3 = self.rpc.w3
+            # Clean condition_id
+            if condition_id.startswith("0x"):
+                cid_hex = condition_id[2:]
+            else:
+                cid_hex = condition_id
+            
+            if len(cid_hex) != 64:
+                raise ValueError(f"Invalid condition_id length: {len(cid_hex)}")
+                
+            cid_bytes = bytes.fromhex(cid_hex)
+
             adapter = w3.eth.contract(
                 address=w3.to_checksum_address(settings.NEG_RISK_ADAPTER),
                 abi=NEGRISK_ABI
@@ -173,12 +186,19 @@ class Wallet:
             
             from_addr = w3.to_checksum_address(self.address)
             
+            # Index set: binary No is 2 (1 << 1), Yes is 1 (1 << 0)
+            index_sets = [1 << outcome_index]
+            
+            log.info(f"[wallet] Using NegRiskAdapter.redeemPositions({condition_id}, {index_sets})")
+
             tx = adapter.functions.redeemPositions(
-                [w3.to_bytes(hexstr=cid) for cid in condition_ids]
+                cid_bytes,
+                index_sets
             ).build_transaction({
                 'from': from_addr,
                 'nonce': w3.eth.get_transaction_count(from_addr),
-                'gasPrice': w3.eth.gas_price,
+                'gas': 250000,
+                'gasPrice': int(w3.eth.gas_price * 1.5), # Aggressive gas for redemption
             })
             
             signed_tx = w3.eth.account.sign_transaction(tx, private_key=settings.PRIVATE_KEY)
@@ -188,10 +208,10 @@ class Wallet:
             receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
             
             if receipt.status == 1:
-                log.info("[wallet] ✅ NegRisk redemption successful")
+                log.info(f"[wallet] ✅ NegRisk redemption successful for {condition_id}")
                 return True
             else:
-                log.error("[wallet] ❌ NegRisk redemption transaction failed")
+                log.error(f"[wallet] ❌ NegRisk redemption transaction failed (reverted) for {condition_id}")
                 return False
                 
         except Exception as e:

@@ -50,24 +50,44 @@ def main():
 
         log.info(f"Found {len(redeemable_positions)} redeemable positions! Processing...")
 
+        negrisk_positions = []
         standard_positions = []
-        negrisk_cids = []
         
         for pos in redeemable_positions:
             if pos.get("negativeRisk"):
-                cid = pos.get("conditionId")
-                if cid:
-                    negrisk_cids.append(cid)
+                negrisk_positions.append(pos)
             else:
                 standard_positions.append(pos)
 
-        # 1. Process Negative Risk (Batch)
-        if negrisk_cids:
-            log.info(f"--- Redeeming {len(negrisk_cids)} Negative Risk positions ---")
-            if wallet.redeem_negrisk(negrisk_cids):
-                log.info("✅ Batch NegRisk redemption successful")
+        # 1. Process Negative Risk
+        for pos in negrisk_positions:
+            cid = pos.get("conditionId")
+            title = pos.get("title", "Unknown Market")
+            outcome_str = pos.get("outcome", "No")
+            outcome_index = 0 if outcome_str.lower() == "yes" else 1
+            
+            log.info(f"--- Redeeming NegRisk: {title} ({outcome_str}) ---")
+            
+            # 1a. Attempt redemption on sub-market CID
+            success = wallet.redeem_negrisk(cid, outcome_index)
+            
+            if success:
+                log.info(f"✅ Successfully redeemed sub-market: {title}")
             else:
-                log.warning("❌ Batch NegRisk redemption failed")
+                # 1b. If sub-market fails, try the Event Root CID (common for NegRisk winnings)
+                events = pos.get("events", [])
+                if events and isinstance(events, list):
+                    root_cid = events[0].get("conditionId")
+                    if root_cid and root_cid != cid:
+                        log.info(f" 🌀 Retrying with Event Root CID: {root_cid}...")
+                        if wallet.redeem_negrisk(root_cid, outcome_index):
+                            log.info(f"✅ Successfully redeemed via Root CID for {title}")
+                        else:
+                            log.warning(f"❌ Failed to redeem via both Sub-market and Root CID for {title}")
+                    else:
+                        log.warning(f"❌ Sub-market redemption failed and no distinct Root CID found for {title}")
+                else:
+                    log.warning(f"❌ Sub-market redemption failed and no event metadata found for {title}")
 
         # 2. Process Standard (Sequential)
         for pos in standard_positions:

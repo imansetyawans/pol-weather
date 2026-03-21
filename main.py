@@ -169,6 +169,31 @@ class WeatherBot:
                     self._log(f"  ❌ No trade signal for {city}")
 
                 enriched.append(market)
+            
+            # ── 5. Auto-redeem any winning positions ──
+            if positions:
+                redeemable = [p for p in positions if p.get("redeemable") is True]
+                if redeemable:
+                    self._log(f"💰 Found {len(redeemable)} redeemable winning positions! Initiating auto-redemption...", "bold green")
+                    for p in redeemable:
+                        cid = p.get("conditionId")
+                        is_neg_risk = p.get("negativeRisk", False)
+                        outcome_str = p.get("outcome", "No")
+                        outcome_idx = 0 if outcome_str.lower() == "yes" else 1
+                        
+                        if is_neg_risk:
+                            # 5a. NegRisk Sweep (Sub-market then Root failover)
+                            success = self.wallet.redeem_negrisk(cid, outcome_idx)
+                            if not success:
+                                events = p.get("events", [])
+                                if events and isinstance(events, list):
+                                    root_cid = events[0].get("conditionId")
+                                    if root_cid and root_cid != cid:
+                                        self._log(f"  🌀 Retrying NegRisk via Root CID: {root_cid}...", "cyan")
+                                        self.wallet.redeem_negrisk(root_cid, outcome_idx)
+                        else:
+                            # 5b. Standard Redemption
+                            self.wallet.redeem_positions(cid, outcome_idx)
 
             # ── 6. Update dashboard ──
             self._enriched_markets = enriched
