@@ -16,6 +16,12 @@ USDC_ABI = json.loads('[{"constant":true,"inputs":[{"name":"_owner","type":"addr
                        '"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],'
                        '"type":"function"}]')
 
+# Minimal Gnosis CTF ABI for redeemPositions
+CTF_ABI = json.loads('[{"constant":false,"inputs":[{"name":"collateralToken","type":"address"},'
+                       '{"name":"parentCollectionId","type":"bytes32"},{"name":"conditionId","type":"bytes32"},'
+                       '{"name":"indexSets","type":"uint256[]"}],"name":"redeemPositions","outputs":[],'
+                       '"payable":false,"stateMutability":"nonpayable","type":"function"}]')
+
 
 class Wallet:
     """Interface for wallet balance, positions, and redemption."""
@@ -74,3 +80,66 @@ class Wallet:
             "open_positions": len(positions),
             "positions": positions,
         }
+
+    def redeem_positions(self, condition_id: str, outcome_index: int) -> bool:
+        """
+        Execute an on-chain redemption for a given condition.
+        
+        Args:
+            condition_id: The 32-byte condition ID hex string
+            outcome_index: 0 for Yes, 1 for No
+            
+        Returns:
+            True if successful transaction, False otherwise
+        """
+        try:
+            log.info(f"[wallet] 🏦 Initiating on-chain redemption for {condition_id}...")
+            
+            if settings.DRY_RUN:
+                log.info(f"[wallet] (DRY-RUN) Would redeem condition {condition_id} with outcome index {outcome_index}")
+                return True
+
+            w3 = self.rpc.w3
+            # Index sets: binary markets use 1 for Yes (0) and 2 for No (1)
+            index_set = [1 << outcome_index]
+            
+            ctf = w3.eth.contract(
+                address=w3.to_checksum_address(settings.CTF_ADDRESS),
+                abi=CTF_ABI
+            )
+            
+            # Prepare transaction
+            from_addr = w3.to_checksum_address(self.address)
+            
+            # parentCollectionId is always zero for base markets
+            parent_id = "0x" + "0" * 64
+            
+            tx = ctf.functions.redeemPositions(
+                w3.to_checksum_address(settings.USDC_ADDRESS),
+                parent_id,
+                condition_id,
+                index_set
+            ).build_transaction({
+                'from': from_addr,
+                'nonce': w3.eth.get_transaction_count(from_addr),
+                'gasPrice': w3.eth.gas_price,
+            })
+            
+            # Sign and send
+            signed_tx = w3.eth.account.sign_transaction(tx, private_key=settings.PRIVATE_KEY)
+            tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            
+            log.info(f"[wallet] 🚀 Redemption TX Sent: {tx_hash.hex()}")
+            
+            # Wait for receipt
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            if receipt.status == 1:
+                log.info(f"[wallet] ✅ Redemption successful for {condition_id}")
+                return True
+            else:
+                log.error(f"[wallet] ❌ Redemption transaction failed for {condition_id}")
+                return False
+                
+        except Exception as e:
+            log.error(f"[wallet] Error during redemption: {e}")
+            return False
