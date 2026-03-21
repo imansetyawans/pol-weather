@@ -40,6 +40,16 @@ class Settings:
     NEG_RISK_ADAPTER: str = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"
     
     # Take Profit Settings
+    TAKE_PROFIT_THRESHOLD: float = float(os.getenv("TAKE_PROFIT_THRESHOLD", "0.99"))
+    KELLY_FACTOR: float = float(os.getenv("KELLY_FACTOR", "0.25"))
+
+    # ── Weather APIs ──
+    NOAA_API: str = os.getenv("NOAA_API", "https://api.weather.gov")
+    OPENWEATHERMAP_API_KEY: str = os.getenv("OPENWEATHERMAP_API_KEY", "")
+
+    # ── Logging ──
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    LOG_FILE: str = os.getenv("LOG_FILE", "bot.log")
 
     # ── Traded markets persistence ──
     TRADED_MARKETS_FILE: str = os.getenv("TRADED_MARKETS_FILE", "traded_markets.json")
