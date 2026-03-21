@@ -78,7 +78,7 @@ class WeatherBot:
 
             # ── 2. Scan markets ──
             self._log("📡 Scanning Polymarket for weather markets...")
-            markets = await asyncio.to_thread(self.scanner.scan)
+            markets = await asyncio.to_thread(self.scanner.scan, limit_top=False)
             self._log(f"📊 Found {len(markets)} qualifying markets")
 
             if not markets:
@@ -111,6 +111,10 @@ class WeatherBot:
                             self._log(f"⚠ Take profit failed for {city}", "yellow")
                         enriched.append(market)
                         continue  # Skip regular evaluation if we are taking profit
+
+                # Bypass regular buy evaluation if market is not in the Top N volume events today
+                if not market.get("is_top_market", False):
+                    continue
 
                 # Fetch weather forecast
                 self._log(f"🌤️  Fetching forecast for {city}...")
@@ -232,7 +236,7 @@ class WeatherBot:
                 log.info(f"Balance: ${balance:.2f} USDC")
                 log.info(f"Mode: {'DRY RUN' if settings.DRY_RUN else 'LIVE'}")
 
-                markets = self.scanner.scan()
+                markets = self.scanner.scan(limit_top=False)
                 log.info(f"📊 Found {len(markets)} markets")
 
                 for market in markets:
@@ -250,6 +254,10 @@ class WeatherBot:
                             if result:
                                 log.info(f"✅ Trade result: SELL NO on {city}")
                             continue  # Skip regular evaluation if taking profit
+
+                    # Bypass regular buy evaluation if market is not in the Top N volume events today
+                    if not market.get("is_top_market", False):
+                        continue
 
                     forecast = self.weather.fetch_forecast(city)
                     if not forecast:

@@ -68,9 +68,9 @@ def main():
         # Sync trader to prevent duplicate trade log warnings 
         trader.sync_live_positions(positions)
 
-        log.info("Scanning Polymarket for live weather prices...")
-        markets = scanner.scan()
-        log.info(f"Found {len(markets)} active weather markets.")
+        log.info("Scanning Polymarket for live weather prices (unlimited scan)...")
+        markets = scanner.scan(limit_top=False)
+        log.info(f"Full scan complete: found {len(markets)} total active weather markets.")
 
         sold_any = False
         for market in markets:

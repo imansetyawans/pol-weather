@@ -252,48 +252,63 @@ class MarketScanner:
         except (ValueError, TypeError):
             return None
 
-    def scan(self) -> list[dict]:
+    def scan(self, limit_top: bool = True) -> list[dict]:
         """
-        Full scan pipeline:
-          1. Fetch all active events
-          2. Filter to temperature markets
-          3. Group by event (city+date), select top N events by volume,
-             then return all bracket markets for those events
+        Main entry point:
+        1. Fetch all active weather temperature events.
+        2. Filter out non-US cities or bad dates.
+        3. Sort by volume and optionally pick the top N.
+        4. Extract the nested markets for those events.
         """
         try:
-            events = self.fetch_weather_events()
-            markets = self.filter_temperature_markets(events)
+            log.info("Fetching active weather events from Polymarket Gamma API...")
+            all_events = self.fetch_weather_events()
+            if not all_events:
+                return []
 
-            if not markets:
-                log.warning("[scanner] No temperature markets found")
-                return self._cached_markets if self._cached_markets else []
+            # Filter events for temperature and valid dates
+            weather_events = self.filter_temperature_markets(all_events)
+            log.info(f" Found {len(weather_events)} temperature events")
+
+            if not weather_events:
+                return []
 
             # Group markets by event slug, sort events by total volume
             event_groups: dict[str, list[dict]] = {}
             event_volumes: dict[str, float] = {}
-            for m in markets:
+            for m in weather_events: # weather_events here are already individual markets
                 slug = m.get("event_slug", "unknown")
                 if slug not in event_groups:
                     event_groups[slug] = []
                     event_volumes[slug] = m.get("event_volume", 0) or 0
                 event_groups[slug].append(m)
 
-            # Sort events by volume (descending), take top N
+            # Sort events by volume (descending)
             sorted_slugs = sorted(event_volumes.keys(), key=lambda s: event_volumes[s], reverse=True)
-            top_slugs = sorted_slugs[: settings.TOP_MARKETS]
+            top_slugs = set(sorted_slugs[: settings.TOP_MARKETS])
 
-            # Collect all markets from top events
-            top_markets = []
-            for slug in top_slugs:
-                top_markets.extend(event_groups[slug])
+            # Select top N events or all events based on limit_top
+            target_slugs = sorted_slugs[: settings.TOP_MARKETS] if limit_top else sorted_slugs
 
-            self._cached_markets = top_markets
-            cities = list(set(m.get("city", "?") or "?" for m in top_markets))
-            log.info(
-                f"[scanner] Selected top {len(top_slugs)} events ({len(top_markets)} bracket markets) "
-                f"for cities: {', '.join(cities)}"
-            )
-            return top_markets
+            # Collect all markets from target events
+            target_markets = []
+            target_cities = set()
+            for slug in target_slugs:
+                for market in event_groups[slug]:
+                    city = market.get("city", "")
+                    if city:
+                        target_cities.add(city)
+                    market["is_top_market"] = (slug in top_slugs)
+                    target_markets.append(market)
+
+            self._cached_markets = target_markets
+            
+            if limit_top:
+                log.info(f" Selected top {settings.TOP_MARKETS} events ({len(target_markets)} bracket markets) for cities: {', '.join(target_cities)}")
+            else:
+                log.info(f" Selected all {len(target_slugs)} events ({len(target_markets)} bracket markets) for cities: {', '.join(target_cities)}")
+            
+            return target_markets
 
         except Exception as exc:
             log.error(f"[scanner] Scan failed: {exc}")
