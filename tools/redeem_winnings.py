@@ -48,38 +48,46 @@ def main():
             log.info("❌ No redeemable winning positions found at this time.")
             return
 
-        log.info(f"Found {len(redeemable_positions)} redeemable positions! Initiating batch claim...")
+        log.info(f"Found {len(redeemable_positions)} redeemable positions! Processing...")
 
-        success_count = 0
-        tried_conditions = set()
-
+        standard_positions = []
+        negrisk_cids = []
+        
         for pos in redeemable_positions:
+            if pos.get("negativeRisk"):
+                cid = pos.get("conditionId")
+                if cid:
+                    negrisk_cids.append(cid)
+            else:
+                standard_positions.append(pos)
+
+        # 1. Process Negative Risk (Batch)
+        if negrisk_cids:
+            log.info(f"--- Redeeming {len(negrisk_cids)} Negative Risk positions ---")
+            if wallet.redeem_negrisk(negrisk_cids):
+                log.info("✅ Batch NegRisk redemption successful")
+            else:
+                log.warning("❌ Batch NegRisk redemption failed")
+
+        # 2. Process Standard (Sequential)
+        for pos in standard_positions:
             condition_id = pos.get("conditionId")
             if not condition_id:
                 continue
                 
-            # Avoid redundant calls for the same condition (e.g. if multiple outcomes somehow)
-            if condition_id in tried_conditions:
-                continue
-                
             title = pos.get("title", "Unknown Market")
             outcome_str = pos.get("outcome", "No")
-            
-            # Map outcome string to index (Yes=0, No=1)
-            # Binary markets in CTF have Yes at index 0 and No at index 1
             outcome_index = 0 if outcome_str.lower() == "yes" else 1
             
-            log.info(f"--- Redeeming: {title} ({outcome_str}) ---")
-            
+            log.info(f"--- Redeeming Standard: {title} ({outcome_str}) ---")
             if wallet.redeem_positions(condition_id, outcome_index):
-                success_count += 1
-                tried_conditions.add(condition_id)
+                log.info(f"✅ Successfully redeemed {title}")
             else:
-                log.warning(f"Failed to redeem condition: {condition_id}")
+                log.warning(f"❌ Failed to redeem {title}")
 
         log.info("=" * 60)
-        log.info(f"Redemption Process Complete. Successfully claimed {success_count} conditions.")
-        log.info(f"Check your USDC balance: ${wallet.get_usdc_balance():.2f}")
+        log.info("Redemption Process Complete.")
+        log.info(f"Final USDC balance: ${wallet.get_usdc_balance():.2f}")
         log.info("=" * 60)
 
     except KeyboardInterrupt:

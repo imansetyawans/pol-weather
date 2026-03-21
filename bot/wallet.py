@@ -22,6 +22,10 @@ CTF_ABI = json.loads('[{"constant":false,"inputs":[{"name":"collateralToken","ty
                        '{"name":"indexSets","type":"uint256[]"}],"name":"redeemPositions","outputs":[],'
                        '"payable":false,"stateMutability":"nonpayable","type":"function"}]')
 
+# Minimal NegRiskAdapter ABI
+NEGRISK_ABI = json.loads('[{"constant":false,"inputs":[{"name":"conditionIds","type":"bytes32[]"}],'
+                          '"name":"redeemPositions","outputs":[],"type":"function"}]')
+
 
 class Wallet:
     """Interface for wallet balance, positions, and redemption."""
@@ -141,5 +145,55 @@ class Wallet:
                 return False
                 
         except Exception as e:
-            log.error(f"[wallet] Error during redemption: {e}")
+            log.error(f"[wallet] Error during standard redemption: {e}")
+            return False
+
+    def redeem_negrisk(self, condition_ids: list[str]) -> bool:
+        """
+        Execute redemption for Negative Risk markets via the specialized Adapter.
+        
+        Args:
+            condition_ids: List of 32-byte condition ID hex strings
+            
+        Returns:
+            True if successful transaction, False otherwise
+        """
+        try:
+            log.info(f"[wallet] 🏦 Initiating batch NegRisk redemption for {len(condition_ids)} conditions...")
+            
+            if settings.DRY_RUN:
+                log.info(f"[wallet] (DRY-RUN) Would redeem NegRisk conditions: {condition_ids}")
+                return True
+
+            w3 = self.rpc.w3
+            adapter = w3.eth.contract(
+                address=w3.to_checksum_address(settings.NEG_RISK_ADAPTER),
+                abi=NEGRISK_ABI
+            )
+            
+            from_addr = w3.to_checksum_address(self.address)
+            
+            tx = adapter.functions.redeemPositions(
+                [w3.to_bytes(hexstr=cid) for cid in condition_ids]
+            ).build_transaction({
+                'from': from_addr,
+                'nonce': w3.eth.get_transaction_count(from_addr),
+                'gasPrice': w3.eth.gas_price,
+            })
+            
+            signed_tx = w3.eth.account.sign_transaction(tx, private_key=settings.PRIVATE_KEY)
+            tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            
+            log.info(f"[wallet] 🚀 NegRisk Redemption TX Sent: {tx_hash.hex()}")
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            
+            if receipt.status == 1:
+                log.info("[wallet] ✅ NegRisk redemption successful")
+                return True
+            else:
+                log.error("[wallet] ❌ NegRisk redemption transaction failed")
+                return False
+                
+        except Exception as e:
+            log.error(f"[wallet] Error during NegRisk redemption: {e}")
             return False
